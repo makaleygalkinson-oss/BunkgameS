@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
-const socketIo = require('socket.io');
 const cors = require('cors');
 const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
@@ -10,12 +9,6 @@ const jwt = require('jsonwebtoken');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
-});
 
 app.use(cors());
 app.use(express.json());
@@ -35,9 +28,17 @@ if (!supabaseUrl || !supabaseKey) {
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Хранилище онлайн пользователей (socketId -> username)
-const socketToUser = new Map();
-const onlineUsers = new Set();
+// Функция для очистки неактивных пользователей
+async function cleanupInactiveUsers() {
+  try {
+    await supabase.rpc('cleanup_old_online_users');
+  } catch (error) {
+    console.error('Ошибка очистки неактивных пользователей:', error);
+  }
+}
+
+// Запускаем очистку каждые 10 секунд
+setInterval(cleanupInactiveUsers, 10000);
 
 // Middleware для проверки JWT
 const authenticateToken = (req, res, next) => {
@@ -181,43 +182,90 @@ app.get('/api/me', authenticateToken, (req, res) => {
   res.json({ user: req.user });
 });
 
-// Socket.io подключения
-io.on('connection', (socket) => {
-  console.log('Пользователь подключился:', socket.id);
+// API для отметки пользователя онлайн
+app.post('/api/user-online', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const username = req.user.username;
 
-  socket.on('user-online', (userData) => {
-    if (userData && userData.username) {
-      // Если пользователь уже был онлайн с другого устройства, удаляем старое подключение
-      for (const [socketId, username] of socketToUser.entries()) {
-        if (username === userData.username && socketId !== socket.id) {
-          socketToUser.delete(socketId);
-          onlineUsers.delete(username);
+    // Обновляем или создаем запись онлайн пользователя
+    const { error } = await supabase
+      .from('online_users')
+      .upsert(
+        {
+          user_id: userId,
+          username: username,
+          last_seen: new Date().toISOString()
+        },
+        {
+          onConflict: 'user_id'
         }
-      }
-      
-      socketToUser.set(socket.id, userData.username);
-      onlineUsers.add(userData.username);
-      io.emit('online-count', onlineUsers.size);
-    }
-  });
+      );
 
-  socket.on('disconnect', () => {
-    console.log('Пользователь отключился:', socket.id);
-    const username = socketToUser.get(socket.id);
-    if (username) {
-      socketToUser.delete(socket.id);
-      onlineUsers.delete(username);
-      io.emit('online-count', onlineUsers.size);
+    if (error) {
+      console.error('Ошибка обновления онлайн статуса:', error);
+      return res.status(500).json({ error: 'Ошибка обновления статуса' });
     }
-  });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Ошибка API user-online:', error);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// API для отметки пользователя оффлайн
+app.post('/api/user-offline', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const { error } = await supabase
+      .from('online_users')
+      .delete()
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('Ошибка удаления онлайн статуса:', error);
+      return res.status(500).json({ error: 'Ошибка обновления статуса' });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Ошибка API user-offline:', error);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
 });
 
 // Получить количество онлайн игроков
-app.get('/api/online-count', (req, res) => {
-  res.json({ count: onlineUsers.size });
+app.get('/api/online-count', async (req, res) => {
+  try {
+    // Сначала очищаем неактивных
+    await cleanupInactiveUsers();
+
+    // Получаем количество активных пользователей
+    const { count, error } = await supabase
+      .from('online_users')
+      .select('*', { count: 'exact', head: true });
+
+    if (error) {
+      console.error('Ошибка получения количества онлайн:', error);
+      return res.status(500).json({ error: 'Ошибка сервера' });
+    }
+
+    res.json({ count: count || 0 });
+  } catch (error) {
+    console.error('Ошибка API online-count:', error);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
 });
 
-server.listen(PORT, () => {
-  console.log(`Сервер запущен на порту ${PORT}`);
-  console.log(`Подключено к Supabase: ${supabaseUrl}`);
-});
+// Запуск сервера (только для локальной разработки)
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`Сервер запущен на порту ${PORT}`);
+    console.log(`Подключено к Supabase: ${supabaseUrl}`);
+  });
+}
+
+// Экспорт для Vercel
+module.exports = server;

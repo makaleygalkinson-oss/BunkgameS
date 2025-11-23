@@ -1,9 +1,8 @@
-// Подключение к Socket.io
-const socket = io();
-
 // Состояние приложения
 let currentUser = null;
 let token = localStorage.getItem('token');
+let onlineCheckInterval = null;
+let heartbeatInterval = null;
 
 // Инициализация
 document.addEventListener('DOMContentLoaded', () => {
@@ -15,13 +14,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Инициализация приложения
 function initializeApp() {
-    // Обновление счетчика онлайн каждые 5 секунд
-    setInterval(updateOnlineCount, 5000);
+    // Обновление счетчика онлайн каждые 3 секунды
+    onlineCheckInterval = setInterval(updateOnlineCount, 3000);
     
     // Обработка закрытия страницы
     window.addEventListener('beforeunload', () => {
         if (currentUser) {
-            socket.emit('user-offline');
+            markUserOffline();
+        }
+    });
+
+    // Обработка потери фокуса/скрытия вкладки
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden && currentUser) {
+            markUserOffline();
+        } else if (!document.hidden && currentUser) {
+            markUserOnline();
         }
     });
 }
@@ -54,11 +62,6 @@ function setupEventListeners() {
     document.getElementById('login-form').addEventListener('submit', handleLogin);
     document.getElementById('register-form').addEventListener('submit', handleRegister);
     document.getElementById('logout-btn').addEventListener('click', handleLogout);
-
-    // Socket.io события
-    socket.on('online-count', (count) => {
-        updateOnlineCountDisplay(count);
-    });
 }
 
 // Показать модальное окно
@@ -114,7 +117,7 @@ async function handleRegister(e) {
         
         updateUI();
         hideModal('register-modal');
-        socket.emit('user-online', { username: currentUser.username });
+        markUserOnline();
     } catch (error) {
         document.getElementById('register-error').textContent = 'Ошибка подключения к серверу';
     }
@@ -151,7 +154,7 @@ async function handleLogin(e) {
         
         updateUI();
         hideModal('login-modal');
-        socket.emit('user-online', { username: currentUser.username });
+        markUserOnline();
     } catch (error) {
         document.getElementById('login-error').textContent = 'Ошибка подключения к серверу';
     }
@@ -159,11 +162,11 @@ async function handleLogin(e) {
 
 // Выход
 function handleLogout() {
+    markUserOffline();
     token = null;
     currentUser = null;
     localStorage.removeItem('token');
     updateUI();
-    socket.emit('user-offline');
 }
 
 // Проверка авторизации
@@ -184,7 +187,7 @@ async function checkAuth() {
             const data = await response.json();
             currentUser = data.user;
             updateUI();
-            socket.emit('user-online', { username: currentUser.username });
+            markUserOnline();
         } else {
             localStorage.removeItem('token');
             token = null;
@@ -211,6 +214,51 @@ function updateUI() {
         userMenu.classList.add('hidden');
         heroButtons.innerHTML = '<button id="hero-register-btn" class="btn-hero">Начать Игру</button>';
         document.getElementById('hero-register-btn').addEventListener('click', () => showModal('register-modal'));
+    }
+}
+
+// Отметить пользователя онлайн
+async function markUserOnline() {
+    if (!token || !currentUser) return;
+
+    try {
+        await fetch('/api/user-online', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        // Запускаем heartbeat для поддержания онлайн статуса
+        if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+        }
+        heartbeatInterval = setInterval(markUserOnline, 15000); // каждые 15 секунд
+    } catch (error) {
+        console.error('Ошибка отметки онлайн:', error);
+    }
+}
+
+// Отметить пользователя оффлайн
+async function markUserOffline() {
+    if (!token || !currentUser) return;
+
+    try {
+        await fetch('/api/user-offline', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+            heartbeatInterval = null;
+        }
+    } catch (error) {
+        console.error('Ошибка отметки оффлайн:', error);
     }
 }
 
