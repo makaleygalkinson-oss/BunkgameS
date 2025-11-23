@@ -1,9 +1,10 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
 const path = require('path');
-const sqlite3 = require('sqlite3').verbose();
+const { createClient } = require('@supabase/supabase-js');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
@@ -23,18 +24,16 @@ app.use(express.static(path.join(__dirname, 'public')));
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 const PORT = process.env.PORT || 3000;
 
-// Инициализация базы данных
-const db = new sqlite3.Database('./users.db');
+// Инициализация Supabase
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_ANON_KEY;
 
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-});
+if (!supabaseUrl || !supabaseKey) {
+  console.error('ОШИБКА: SUPABASE_URL и SUPABASE_ANON_KEY должны быть установлены в .env файле');
+  process.exit(1);
+}
+
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Хранилище онлайн пользователей (socketId -> username)
 const socketToUser = new Map();
@@ -69,29 +68,58 @@ app.post('/api/register', async (req, res) => {
       return res.status(400).json({ error: 'Пароль должен быть не менее 6 символов' });
     }
 
+    // Проверка существующего пользователя
+    const { data: existingUsers, error: checkError } = await supabase
+      .from('users')
+      .select('id')
+      .or(`username.eq.${username},email.eq.${email}`)
+      .limit(1);
+
+    if (checkError && checkError.code !== 'PGRST116') { // PGRST116 = no rows returned
+      console.error('Ошибка проверки пользователя:', checkError);
+      return res.status(500).json({ error: 'Ошибка при проверке пользователя' });
+    }
+
+    if (existingUsers && existingUsers.length > 0) {
+      return res.status(400).json({ error: 'Пользователь с таким именем или email уже существует' });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    db.run(
-      'INSERT INTO users (username, email, password) VALUES (?, ?, ?)',
-      [username, email, hashedPassword],
-      function(err) {
-        if (err) {
-          if (err.message.includes('UNIQUE constraint')) {
-            return res.status(400).json({ error: 'Пользователь с таким именем или email уже существует' });
-          }
-          return res.status(500).json({ error: 'Ошибка при создании пользователя' });
+    // Создание нового пользователя
+    const { data: newUser, error: insertError } = await supabase
+      .from('users')
+      .insert([
+        {
+          username,
+          email,
+          password: hashedPassword
         }
+      ])
+      .select()
+      .single();
 
-        const token = jwt.sign(
-          { id: this.lastID, username, email },
-          JWT_SECRET,
-          { expiresIn: '24h' }
-        );
+    if (insertError) {
+      console.error('Ошибка Supabase:', insertError);
+      return res.status(500).json({ error: 'Ошибка при создании пользователя' });
+    }
 
-        res.json({ token, user: { id: this.lastID, username, email } });
-      }
+    const token = jwt.sign(
+      { id: newUser.id, username: newUser.username, email: newUser.email },
+      JWT_SECRET,
+      { expiresIn: '24h' }
     );
+
+    res.json({ 
+      token, 
+      user: { 
+        id: newUser.id, 
+        username: newUser.username, 
+        email: newUser.email 
+      } 
+    });
   } catch (error) {
+    console.error('Ошибка регистрации:', error);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
@@ -105,33 +133,45 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ error: 'Имя пользователя и пароль обязательны' });
     }
 
-    db.get(
-      'SELECT * FROM users WHERE username = ? OR email = ?',
-      [username, username],
-      async (err, user) => {
-        if (err) {
-          return res.status(500).json({ error: 'Ошибка сервера' });
-        }
+    // Поиск пользователя по username или email
+    const { data: users, error: fetchError } = await supabase
+      .from('users')
+      .select('*')
+      .or(`username.eq.${username},email.eq.${username}`)
+      .limit(1);
 
-        if (!user) {
-          return res.status(401).json({ error: 'Неверное имя пользователя или пароль' });
-        }
+    if (fetchError) {
+      console.error('Ошибка поиска пользователя:', fetchError);
+      return res.status(500).json({ error: 'Ошибка сервера' });
+    }
 
-        const validPassword = await bcrypt.compare(password, user.password);
-        if (!validPassword) {
-          return res.status(401).json({ error: 'Неверное имя пользователя или пароль' });
-        }
+    if (!users || users.length === 0) {
+      return res.status(401).json({ error: 'Неверное имя пользователя или пароль' });
+    }
 
-        const token = jwt.sign(
-          { id: user.id, username: user.username, email: user.email },
-          JWT_SECRET,
-          { expiresIn: '24h' }
-        );
+    const user = users[0];
 
-        res.json({ token, user: { id: user.id, username: user.username, email: user.email } });
-      }
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Неверное имя пользователя или пароль' });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, username: user.username, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '24h' }
     );
+
+    res.json({ 
+      token, 
+      user: { 
+        id: user.id, 
+        username: user.username, 
+        email: user.email 
+      } 
+    });
   } catch (error) {
+    console.error('Ошибка авторизации:', error);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
@@ -179,5 +219,5 @@ app.get('/api/online-count', (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Сервер запущен на порту ${PORT}`);
+  console.log(`Подключено к Supabase: ${supabaseUrl}`);
 });
-
