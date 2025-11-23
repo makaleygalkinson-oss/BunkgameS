@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modern Games - Игровая Платформа</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Roboto:wght@300;400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <!-- Навигация -->
+        <nav class="navbar">
+            <div class="nav-container">
+                <div class="logo">
+                    <span class="logo-text">MODERN</span>
+                    <span class="logo-accent">GAMES</span>
+                </div>
+                <div class="nav-right">
+                    <div class="online-indicator">
+                        <span class="pulse-dot"></span>
+                        <span id="online-count">0</span> онлайн
+                    </div>
+                    <div id="user-menu" class="user-menu hidden">
+                        <span id="username-display"></span>
+                        <button id="logout-btn" class="btn-secondary">Выйти</button>
+                    </div>
+                    <div id="auth-buttons" class="auth-buttons">
+                        <button id="login-btn" class="btn-primary">Войти</button>
+                        <button id="register-btn" class="btn-secondary">Регистрация</button>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Главный контент -->
+        <main class="main-content">
+            <div class="hero-section">
+                <div class="hero-content">
+                    <h1 class="hero-title">
+                        <span class="gradient-text">ДОБРО ПОЖАЛОВАТЬ</span>
+                        <span class="hero-subtitle">В БУДУЩЕЕ ИГР</span>
+                    </h1>
+                    <p class="hero-description">
+                        Присоединяйтесь к тысячам игроков и окунитесь в мир современных игр
+                    </p>
+                    <div id="hero-buttons" class="hero-buttons">
+                        <button id="hero-register-btn" class="btn-hero">Начать Игру</button>
+                    </div>
+                </div>
+                <div class="particles"></div>
+            </div>
+
+            <!-- Модальные окна -->
+            <div id="login-modal" class="modal hidden">
+                <div class="modal-content">
+                    <span class="close-modal">&times;</span>
+                    <h2 class="modal-title">ВХОД</h2>
+                    <form id="login-form" class="auth-form">
+                        <div class="form-group">
+                            <label>Имя пользователя или Email</label>
+                            <input type="text" id="login-username" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Пароль</label>
+                            <input type="password" id="login-password" required>
+                        </div>
+                        <div id="login-error" class="error-message"></div>
+                        <button type="submit" class="btn-primary btn-full">Войти</button>
+                    </form>
+                </div>
+            </div>
+
+            <div id="register-modal" class="modal hidden">
+                <div class="modal-content">
+                    <span class="close-modal">&times;</span>
+                    <h2 class="modal-title">РЕГИСТРАЦИЯ</h2>
+                    <form id="register-form" class="auth-form">
+                        <div class="form-group">
+                            <label>Имя пользователя</label>
+                            <input type="text" id="register-username" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Email</label>
+                            <input type="email" id="register-email" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Пароль</label>
+                            <input type="password" id="register-password" required minlength="6">
+                        </div>
+                        <div id="register-error" class="error-message"></div>
+                        <button type="submit" class="btn-primary btn-full">Зарегистрироваться</button>
+                    </form>
+                </div>
+            </div>
+        </main>
+
+        <!-- Футер -->
+        <footer class="footer">
+            <div class="footer-content">
+                <p>&copy; 2024 Modern Games. Все права защищены.</p>
+            </div>
+        </footer>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
+
